@@ -21,12 +21,17 @@ class EmotionDetectorApp:
         self.emotion_labels = ['Angry', 'Disgust', 'Fear', 'Happy', 'Neutral', 'Sad', 'Surprise']
         
         self.fig, self.ax = plt.subplots(figsize=(8, 4))  # Ubah ukuran line chart disini
+        # Inisialisasi line satu kali
         self.line, = self.ax.plot([], [], 'o-', label='Emotion', marker='o')  # Tambahkan marker untuk menunjukkan garis
         self.ax.legend(loc='upper right')
-        self.ax.set_xlabel('Time')
+        self.ax.set_xlabel('Kategori Emosi')
         self.ax.set_ylabel('Percentage')
         self.canvas_chart = FigureCanvasTkAgg(self.fig, master=root)
         self.canvas_chart.draw()
+
+        self.ax.add_line(self.line)
+        
+        self.stop_flag = False
 
         # Update chart with initial data
         self.update_chart([], [])
@@ -42,6 +47,7 @@ class EmotionDetectorApp:
 
     def create_table(self):
         cursor = self.conn.cursor()
+        cursor.execute('DROP TABLE IF EXISTS emotions')
         cursor.execute('''CREATE TABLE IF NOT EXISTS emotions
                           (id INTEGER PRIMARY KEY AUTOINCREMENT,
                            timestamp DATETIME,
@@ -75,18 +81,44 @@ class EmotionDetectorApp:
 
         self.canvas_chart.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
+        self.stop_button = ttk.Button(self.root, text="Stop", command=self.stop_application, style="TButton")
+        self.stop_button.pack(side=tk.LEFT, pady=20)
+
         self.quit_button = ttk.Button(self.root, text="Keluar", command=self.root.destroy, style="TButton")
         self.quit_button.pack(side=tk.BOTTOM, pady=20)
         
     def update_chart(self, categories, percentages):
-        self.line.set_xdata(range(len(categories)))
-        self.line.set_ydata(percentages)
+        self.ax.clear()  # Hapus data sebelumnya pada chart
+        self.line, = self.ax.plot(categories, percentages, 'o-', label='Jumlah', marker='o')  
+        self.ax.legend(loc='upper right')
+        self.ax.set_xlabel('Kategori Emosi')
+        self.ax.set_ylabel('Persentase')
         self.ax.set_xticks(range(len(categories)))
         self.ax.set_xticklabels(categories, rotation=45, ha='right')
-        self.ax.set_yticks(np.arange(0, 101, 10))  # Sumbu y dari 0 hingga 100 dengan interval 10
-        self.ax.set_ylim(0, 100)  # Batas sumbu y dari 0 hingga 100
-        self.canvas_chart.draw()
-    
+        self.ax.set_yticks(np.arange(0, 101, 10))
+        self.ax.set_ylim(0, 100)
+
+    def stop_application(self):
+        self.stop_flag = True
+        self.stop_video_capture()
+        self.plot_chart()
+
+    def plot_chart(self):
+        categories, percentages = self.get_chart_data()
+        self.update_chart(categories, percentages)
+        self.canvas_chart.draw()  # Pindahkan pemanggilan draw ke sini
+
+    def get_chart_data(self):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT emotion_category, AVG(confidence) FROM emotions GROUP BY emotion_category")
+        rows = cursor.fetchall()
+        categories = [row[0] for row in rows]
+        percentages = [row[1] for row in rows]
+        return categories, percentages
+
+    def stop_video_capture(self):
+        self.cap.release()  # Hentikan kamera
+
     def update(self):
         _, frame = self.cap.read()
         labels = []
@@ -126,13 +158,9 @@ class EmotionDetectorApp:
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
         self.root.after(10, self.update)
 
-    def get_chart_data(self):
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM emotions ORDER BY timestamp DESC LIMIT 10")
-        rows = cursor.fetchall()
-        categories = [row[2] for row in rows]
-        percentages = [row[3] for row in rows]
-        return categories[::-1], percentages[::-1]
+        # Periksa stop_flag, jika True, hentikan aplikasi
+        if self.stop_flag:
+            self.stop_video_capture()
     
     def convert_frame_to_image(self, frame):
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
